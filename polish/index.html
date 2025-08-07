@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Submarine Maneuvers — Polish Demo</title>
+  <link rel="stylesheet" href="../style.css"/>
+  <style>
+    /* subtle vignette for polish demo */
+    #canvas-holder{position:relative}
+    .vignette::after{
+      content:""; position:absolute; inset:0;
+      box-shadow: inset 0 0 160px rgba(0,0,0,.35), inset 0 0 320px rgba(0,0,0,.25);
+      pointer-events:none;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-holder" class="vignette"></div>
+
+  <!-- Load your originals from parent directory -->
+  <script src="../p5.js"></script>
+  <script src="../p5.sound.min.js"></script>
+
+  <!-- If your index.html loads these in a different order, mirror that order here -->
+  <script src="../Bubble.js"></script>
+  <script src="../Button.js"></script>
+  <script src="../Fish.js"></script>
+  <script src="../MenuFish.js"></script>
+  <script src="../MouseBubble.js"></script>
+  <script src="../sketch.js"></script>
+
+  <!-- Polish add-ons -->
+  <script src="Collision.js"></script>
+  <script src="LightRays.js"></script>
+  <script src="CaveDecor.js"></script>
+  <script src="PassiveFish.js"></script>
+  <script src="Mine.js"></script>
+  <script src="Shim.js"></script>
+</body>
+</html>
