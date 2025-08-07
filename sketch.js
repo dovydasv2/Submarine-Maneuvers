@@ -1,3 +1,22 @@
+// === Submarine Maneuvers — sketch.js (polish inline) ===
+// This is your file with small, targeted additions:
+// - light rays/surface shimmer near start
+// - passive background fish (behind the cave)
+// - cave texture overlay
+// - occasional mines (rare, easy to disable)
+// - rotational water drag (gentle)
+// - precise circle-vs-segment collision with cave walls
+// You can tweak toggles near the top (POLISH_CONFIG).
+
+// -------------------- POLISH TOGGLES --------------------
+const POLISH_CONFIG = {
+  lightEnabled: true,
+  backgroundFish: true,
+  caveTexture: true,
+  minesEnabled: true,
+  rotationalDrag: true
+};
+
 //general array that has a positive or negative value
 let posOrNeg = [-1, 1];
 
@@ -44,9 +63,11 @@ let yPositionPlayer = 25;
 let yVelocityPlayer = 0;
 let yAccelPlayer = 0;
 let subRotation = 1.57079632679; //pi/2
+let subAngVel = 0;               // (polish) rotational inertia/drag
 
 //hitbox radii
 let hitBoxRadii = [25, 15, 20, 15, 20];
+let hitBoxes = []; // (polish) ensure defined
 
 //variables for score and scoreboard
 let score = 0;
@@ -92,6 +113,15 @@ let tempVar = 0;
 //DEBUG
 let DEBUG = false;
 
+// (polish) timing
+let _lastMs = 0;
+function dtSeconds() {
+  const now = millis();
+  const d = (_lastMs ? now - _lastMs : 16) / 1000;
+  _lastMs = now;
+  return Math.min(d, 0.05);
+}
+
 //FOR CLEARING/SETTING LOCAL STORAGE (HIGHSCORE)
 //localStorage.clear()
 //localStorage.setItem("HIGHSCORE", -487)
@@ -103,12 +133,7 @@ function preload() {
   gameOverSound = loadSound("big-bubble-2-169074.mp3");
   backTrack = loadSound("underwater-ambiencewav-14428.mp3");
   buttonSound = loadSound("pop-made-by-duffybro-83905_vvID4vgB.mp3");
-  
-  
 }
-
-
-
 
 function setup() {
   //get the stored high score from local storage
@@ -117,9 +142,11 @@ function setup() {
   }
   backTrack.setVolume(0.33)
   backTrack.loop()
-  createCanvas(800, 800);
+  const c = createCanvas(800, 800);
+  const holder = document.getElementById('canvas-holder');
+  if (holder) c.parent('canvas-holder');
+
   //loading assets
-  
   textFont(scoreboardFont);
   makeButtons();
   generateTerrain(125);
@@ -128,13 +155,12 @@ function setup() {
   INITIALGENERATION = false;
   generateCoinPositions(coinAmount);
   generateFish();
- 
 }
 
 function draw() {
-if(!LAUNCHED){
-  backTrackPlay();
-}
+  const dts = dtSeconds();
+  if(!LAUNCHED){ backTrackPlay(); }
+
   //if actually in the game
   if (START && !GAMEOVER) {
 
@@ -143,20 +169,31 @@ if(!LAUNCHED){
     makeGradient();
     drawBackgroundRectangle();
 
+    // (polish) surface shimmer + light shafts near the top
+    if (POLISH_CONFIG.lightEnabled) {
+      const depth01 = constrain((-score)/1000, 0, 1); // 0 at start, increases as you go deeper
+      drawSurfaceAndLightRays(width, height, depth01, millis()/1000);
+    }
+
     //general kinematics
     gravity(0.0125);
     waterResistance(0.0005);
     arrowMovement(0.04, 0.04);
+
+    // (polish) rotational water drag tries to align sub with its motion
+    if (POLISH_CONFIG.rotationalDrag) rotationalWaterDrag(dts);
+
     updateHitboxes();
-    
+
     //turn off collision if debug on
-   if (!DEBUG) {
-     terrainCollision();
+    if (!DEBUG) {
+      terrainCollision(); // (polish) now uses precise segment distance math
     }
-    
+
     kinematics();
-    
+
     //draw everything
+    if (POLISH_CONFIG.backgroundFish) { passiveFishUpdate(dts); passiveFishDraw(); } // behind cave
     drawFish();
     makeBubbles();
     updateBubbles();
@@ -164,7 +201,26 @@ if(!LAUNCHED){
     drawCoins();
     drawTerrain();
 
-    coinCollision();
+    // (polish) cave texture overlay (after cave draw)
+    if (POLISH_CONFIG.caveTexture) {
+      const polylines = buildCavePolylines();
+      drawCaveTexture(polylines.rightPts, polylines.leftPts, millis()/1000);
+    }
+
+    // (polish) occasional mines inside the tunnel
+    if (POLISH_CONFIG.minesEnabled) {
+      minesUpdate(dts);
+      minesDraw();
+      // collide mines vs sub hitboxes
+      for (let i=0; i<hitBoxes.length; i++) {
+        if (minesCollide(hitBoxes[i].x, hitBoxes[i].y, hitBoxes[i].radius)) {
+          GAMEOVER = true;
+          gameOverSound.setVolume(1); gameOverSound.play();
+          break;
+        }
+      }
+    }
+
     drawSubmarine(400, 200, 0.5, subRotation);
     fill(0, 0, 0, 100);
     scoreboard();
@@ -190,12 +246,8 @@ if(!LAUNCHED){
 
 //
 function backTrackPlay() {
- 
- // backTrack.loop()
- //backTrack.play();
   LAUNCHED = true;
 }
-
 
 function keyPressed() {
   //if in game
@@ -209,7 +261,6 @@ function keyPressed() {
     }
   }
 }
-
 
 function keyReleased() {
   if (START && !GAMEOVER) {
@@ -297,7 +348,6 @@ function startGame() {
 
     drawButtons();
     drawTitle(400, 125);
-
   }
 }
 
@@ -382,7 +432,6 @@ function gameOver() {
   makeGradient();
   frameRate(35);
 
-  
   drawBackgroundRectangle();
   drawMenuFish();
   drawMouseBubbles();
@@ -444,10 +493,7 @@ function gameOver() {
   if (keyIsDown(82)) {
     buttonSound.play()
     frameRate(60);
-    
-    
-   
-    
+
     //get rid of all objects
     fish = fish.filter((fish) => fish == 100000000);
     coins = coins.filter((coin) => coin == 100000000);
@@ -459,6 +505,7 @@ function gameOver() {
     coinScore = 0;
     score = 0;
     subRotation = 1.57079632679; //pi/2
+    subAngVel = 0;
     x = 600;
     y = 550;
     lx = 200;
@@ -487,7 +534,6 @@ function gameOver() {
     START = true;
   }
 }
-
 
 //draw the scoreboard
 function scoreboard() {
@@ -545,21 +591,15 @@ function generateFish() {
   //draw the fish in the terrain
   for (i = fishAtTop; i < numFishes + 1; i++) {
     fish.push(new Fish());
-    //console.log(fish[i].x)
-    // console.log(fish[i].y)
   }
 }
 
 function drawFish() {
-  //console.log(fish)
   for (i = 0; i < fish.length; i++) {
     fish[i].update();
     fish[i].draw();
   }
 }
-
-
-
 
 //update the hitboxes for the submarine
 function updateHitboxes() {
@@ -584,129 +624,35 @@ function updateHitboxes() {
   });
 }
 
-
-
+// (polish) precise collision vs cave walls using segment distance
 function terrainCollision() {
-  //collision if player goes too high
-  if (terrainRight[0].y1 > height) {
+  // early out: too high -> gameover
+  if (terrainRight.length && terrainRight[0].y1 > height) {
     GAMEOVER = true;
-     gameOverSound.setVolume(1);
-  gameOverSound.play()
+    gameOverSound.setVolume(1); gameOverSound.play();
+    return;
   }
-  for (let i = 0; i < hitBoxes.length; i++) {
-    let hitBox = hitBoxes[i];
-    // Check against terrainRight
-    for (let j = 0; j < terrainRight.length; j++) {
-      if (
-        hitBox.x > terrainRight[j].x1 &&
-        hitBox.y + hitBox.radius > terrainRight[j].y1 - 0.5 &&
-        hitBox.y + hitBox.radius < terrainRight[j].y1 + 0.5
-      ) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-      }
-      if (
-        hitBox.x > terrainRight[j].x2 &&
-        hitBox.y + hitBox.radius > terrainRight[j].y2 - 0.5 &&
-        hitBox.y + hitBox.radius < terrainRight[j].y2 + 0.5
-      ) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-      }
-      if (
-        dist(hitBox.x, hitBox.y, terrainRight[j].x1, terrainRight[j].y1) <
-          hitBox.radius ||
-        dist(hitBox.x, hitBox.y, terrainRight[j].x2, terrainRight[j].y2) <
-          hitBox.radius
-      ) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-        return;
-      }
-      if (
-        hitBox.x > terrainRight[0].x1 &&
-        hitBox.y + hitBox.radius > terrainRight[0].y1 - 1 &&
-        hitBox.y + hitBox.radius < terrainRight[0].y1 + 1
-      ) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-        return;
-      }
-      if (hitBox.x > terrainRight[0].x3 - 200) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-      }
-    }
-    if (
-      hitBox.x > terrainRight[0].x2 &&
-      hitBox.y > terrainRight[0].y2 - 1 &&
-      hitBox.y < terrainRight[0].y2 + 1
-    ) {
-      GAMEOVER = true;
-       gameOverSound.setVolume(1);
-  gameOverSound.play()
-    }
 
-    // Check against terrainLeft (similar to above)
-    for (let j = 0; j < terrainLeft.length; j++) {
-      if (
-        hitBox.x < terrainLeft[j].x1 &&
-        hitBox.y > terrainLeft[j].y1 - 0.5 &&
-        hitBox.y < terrainLeft[j].y1 + 0.5
-      ) {
+  // Check all hit circles against the inner edges of both walls
+  for (let i = 0; i < hitBoxes.length; i++) {
+    const hb = hitBoxes[i];
+    // right wall segments
+    for (let j = 0; j < terrainRight.length; j++) {
+      const q = terrainRight[j];
+      if (circleIntersectsSegment(hb.x, hb.y, hb.radius, q.x1, q.y1, q.x2, q.y2)) {
         GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-      }
-      if (
-        hitBox.x < terrainLeft[j].x2 &&
-        hitBox.y > terrainLeft[j].y2 - 0.5 &&
-        hitBox.y < terrainLeft[j].y2 + 0.5
-      ) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-      }
-      if (
-        dist(hitBox.x, hitBox.y, terrainLeft[j].x1, terrainLeft[j].y1) <
-          hitBox.radius ||
-        dist(hitBox.x, hitBox.y, terrainLeft[j].x2, terrainLeft[j].y2) <
-          hitBox.radius
-      ) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
+        gameOverSound.setVolume(1); gameOverSound.play();
         return;
-      }
-      if (
-        hitBox.x < terrainLeft[0].x1 &&
-        hitBox.y > terrainLeft[0].y1 - 1 &&
-        hitBox.y < terrainLeft[0].y1 + 1
-      ) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
-        return;
-      }
-      if (hitBox.x < terrainLeft[0].x3 + 200) {
-        GAMEOVER = true;
-         gameOverSound.setVolume(1);
-  gameOverSound.play()
       }
     }
-    if (
-      hitBox.x < terrainLeft[0].x2 &&
-      hitBox.y > terrainLeft[0].y2 - 1 &&
-      hitBox.y < terrainLeft[0].y2 + 1
-    ) {
-      GAMEOVER = true;
-       gameOverSound.setVolume(1);
-  gameOverSound.play()
+    // left wall segments
+    for (let j = 0; j < terrainLeft.length; j++) {
+      const q = terrainLeft[j];
+      if (circleIntersectsSegment(hb.x, hb.y, hb.radius, q.x1, q.y1, q.x2, q.y2)) {
+        GAMEOVER = true;
+        gameOverSound.setVolume(1); gameOverSound.play();
+        return;
+      }
     }
   }
 }
@@ -752,12 +698,12 @@ function generateTerrain(amount) {
     
     if (Math.abs(lastMove) > 40) {
       lastMove = random(-40, 40);
-    }else{lastMove = random(-50, 50);}
-    //lastMove = random(-50,50)
+    } else {
+      lastMove = random(-50, 50);
+    }
     move += lastMove;
     currentTerrainNum++;
   }
- // console.log(lastMove);
 }
 
 function drawTerrain() {
@@ -783,10 +729,10 @@ function drawTerrain() {
         );
         fill(255);
         stroke(255);
-       if (DEBUG) {
-         text(i + currentNum, terrainRight[i].x1, terrainRight[i].y1);
-         text(xPositionPlayer.toFixed(), 400, 300)
-       }
+        if (DEBUG) {
+          text(i + currentNum, terrainRight[i].x1, terrainRight[i].y1);
+          text(xPositionPlayer.toFixed(), 400, 300)
+        }
       }
     }
     fill(40);
@@ -815,7 +761,6 @@ function drawTerrain() {
 
     //if the top terrain piece goes above the screen, delete it and generate a new one at the bottom
     if (i == 0 && terrainRight[i].y1 < -100) {
-      
       x = terrainRight[terrainRight.length - 1].x2;
       y = terrainRight[terrainRight.length - 1].y2;
       lx = terrainLeft[terrainLeft.length - 1].x2;
@@ -831,8 +776,7 @@ function drawTerrain() {
           terrainLeft[terrainLeft.length - 2].x2;
         terrainLeft[terrainLeft.length - 1].x2 =
           terrainLeft[terrainLeft.length - 2].x2;
-
-      firstNewTerrain = false;
+        firstNewTerrain = false;
       }
 
       currentNum++;
@@ -856,7 +800,6 @@ function drawSubmarine(x, y, scaleSub, rotation) {
   scale(scaleSub);
   strokeWeight(1.5);
 
-  //rect(-30, -80, 50, 75);
   fill(130);
   ellipse(90, 0, 70, 20);
   ellipse(110, 0, 10, 30);
@@ -870,7 +813,6 @@ function drawSubmarine(x, y, scaleSub, rotation) {
 }
 
 function gravity(accel) {
-  //increase downward acceleration by gravity parameter
   yVelocityPlayer += accel;
 }
 
@@ -923,18 +865,12 @@ function kinematics() {
 
 function arrowMovement(strengthRotate, strengthY) {
   if (keyIsDown(39) || keyIsDown(68)) {
-    /*right arrow*/
-    //accelerate player right
     subRotation += strengthRotate;
   }
   if (keyIsDown(37) || keyIsDown(65)) {
-    /*left arrow*/
-    //accelerate player left
     subRotation -= strengthRotate;
   }
   if (keyIsDown(38) || keyIsDown(87)) {
-    /*up arrow*/
-    //accelerate player up
     xVelocityPlayer += strengthY * cos(PI - subRotation);
     yVelocityPlayer -= strengthY * sin(PI - subRotation);
   }
@@ -942,23 +878,15 @@ function arrowMovement(strengthRotate, strengthY) {
 
 function coinCollision() {
   for (let i = 0; i < hitBoxes.length; i++) {
-    
     let hitBox = hitBoxes[i];
-    // Check against coins
     for (let j = 0; j < coins.length; j++) {
-      if (
-        dist(hitBox.x, hitBox.y, coins[j][0], coins[j][1]) <
-        hitBox.radius + 15
-      ) {
-        if (coinSound.isPlaying()) {
-  coinSound.stop();
-}
-        coinSound.setVolume(0.75)
+      if (dist(hitBox.x, hitBox.y, coins[j][0], coins[j][1]) < hitBox.radius + 15) {
+        if (coinSound.isPlaying()) coinSound.stop();
+        coinSound.setVolume(0.75);
         coinSound.play();
         coinScore++;
-        score = score - 10
+        score = score - 10;
         coins.splice(j, 1);
-        
       }
     }
   }
@@ -979,13 +907,10 @@ function drawCoins() {
 
 function generateCoinPositions(num_coins) {
   for (let i = 0; i < num_coins; i++) {
-    
-    // Pick a random y-value on the screen.
     let y_value = random(800, 50000);
     var valid_right_x = 400;
     var valid_left_x = 400;
 
-    // Find the quad on the right side even with the chosen y-value
     for (let i = 0; i < terrainRight.length; i++) {
       let quad = terrainRight[i];
       if (quad.y1 < y_value && quad.y2 > y_value) {
@@ -994,7 +919,6 @@ function generateCoinPositions(num_coins) {
       }
     }
 
-    // Find the quad on the left side even with the chosen y-value
     for (let i = 0; i < terrainLeft.length; i++) {
       let quad = terrainLeft[i];
       if (quad.y1 < y_value && quad.y2 > y_value) {
@@ -1029,34 +953,184 @@ function drawBackgroundRectangle() {
   rect(gradientX, gradientY, 1600, 1600);
 }
 
-//DEPRECATED
-/*function keyIsPressed() {
-  if (keyCode == 38) {
-    bubbleSound.play();
-    console.log("playing");
-  } else {
-    bubbleSound.stop();
-  }
+// -------------------- POLISH HELPERS (inline) --------------------
 
-  if (keyCode == 82) {
-    if (GAMEOVER) {
-      console.log("r");
-      terrainRight = terrainRight.filter((terrain) => terrain.y1 == 100000);
-      terrainLeft = terrainLeft.filter((terrain) => terrain.y1 == 100000);
-      x = 600;
-      y = 550;
-      lx = 200;
-      ly = 550;
-      move = 0;
-      xVelocityPlayer = 0;
-      yVelocityPlayer = 0;
-      INITIALGENERATION = true;
-      generateTerrain(numTerrain * numLevels + 5);
-      INITIALGENERATION = false;
-      GAMEOVER = false;
-      START = true;
+// rotational drag: sub tries to align with its velocity
+function rotationalWaterDrag(dt) {
+  // velocity of the sub (world scroll sign reversed is fine here)
+  const vx = xVelocityPlayer, vy = yVelocityPlayer;
+  const sp = Math.hypot(vx, vy);
+  if (!sp) return;
+
+  // facing vector (nose); thrust uses PI - subRotation; either orientation works for alignment
+  const hx = Math.cos(subRotation), hy = Math.sin(subRotation);
+
+  // signed cross tells which side flow is on
+  const cross = hx*vy - hy*vx;
+  // quadratic-ish drag
+  const ROT_DRAG = 3.0;
+  subAngVel -= subAngVel * ROT_DRAG * dt;
+  subAngVel += cross * Math.min(0.8, sp * 0.002);
+  subRotation += subAngVel;
+}
+
+// closest point on segment and circle/segment test
+function closestPointOnSegment(ax, ay, bx, by, px, py) {
+  const abx = bx - ax, aby = by - ay;
+  const apx = px - ax, apy = py - ay;
+  const ab2 = abx*abx + aby*aby;
+  let t = (ab2 === 0) ? 0 : (apx*abx + apy*aby) / ab2;
+  t = Math.max(0, Math.min(1, t));
+  return { x: ax + abx * t, y: ay + aby * t };
+}
+function circleIntersectsSegment(cx, cy, r, ax, ay, bx, by) {
+  const q = closestPointOnSegment(ax, ay, bx, by, cx, cy);
+  const dx = cx - q.x, dy = cy - q.y;
+  return (dx*dx + dy*dy) <= r*r;
+}
+
+// Build inner-edge polylines for texture overlay
+function buildCavePolylines() {
+  const rightPts = [];
+  const leftPts = [];
+  for (let i=0;i<terrainRight.length;i++) {
+    rightPts.push({x: terrainRight[i].x1, y: terrainRight[i].y1});
+    rightPts.push({x: terrainRight[i].x2, y: terrainRight[i].y2});
+  }
+  for (let i=0;i<terrainLeft.length;i++) {
+    leftPts.push({x: terrainLeft[i].x1, y: terrainLeft[i].y1});
+    leftPts.push({x: terrainLeft[i].x2, y: terrainLeft[i].y2});
+  }
+  return { rightPts, leftPts };
+}
+
+// Light rays + surface shimmer
+function drawSurfaceAndLightRays(w, h, depth01, t) {
+  // light shafts
+  push();
+  blendMode(ADD);
+  noStroke();
+  for (let i = 0; i < 5; i++) {
+    const x = (i+1) * (w/6) + sin(t*0.5 + i)*w*0.05;
+    const rw = w * 0.12;
+    for (let y = 0; y < h; y+=4) {
+      const f = y / h;
+      const a = (1 - f) * (1 - depth01) * 40;
+      if (a > 0.5) { fill(255, 255, 210, a); rect(x - rw/2, y, rw, 4); }
+    }
+  }
+  pop();
+
+  // surface shimmer when shallow
+  if (depth01 < 0.25) {
+    const y0 = 30 + 8 * sin(t*2.2);
+    stroke(220, 240, 255, 160 - depth01*500);
+    strokeWeight(3);
+    for (let x = 0; x < w; x+=6) {
+      const y = y0 + sin(x*0.03 + t*1.6) * 2;
+      point(x, y);
     }
   }
 }
 
-*/
+// Cave texture
+function drawCaveTexture(topPts, botPts, t) {
+  stroke(30, 50, 70, 80);
+  for (let pts of [topPts, botPts]) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i+1];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = -dy/len, uy = dx/len;
+      const n = 1 + Math.floor(len / 90);
+      for (let k = 0; k < n; k++) {
+        const s = (k+0.3)/(n+0.5);
+        const px = a.x + dx*s, py = a.y + dy*s;
+        const l = 4 + noise(px*0.01, py*0.01, t*0.2)*10;
+        line(px, py, px + ux*l, py + uy*l);
+      }
+    }
+  }
+  noStroke(); fill(20, 40, 60, 80);
+  for (let i = 0; i < 50; i++) rect(random(width), random(height), 1, 1);
+}
+
+// Passive background fish (behind cave)
+const _pfish = { items:[], spawnTimer: 0 };
+function _spawnFish() {
+  _pfish.items.push({
+    x: width + 20,
+    y: random(40, height-40),
+    vx: -random(20, 60),
+    r: random(6, 14),
+    w: random(TWO_PI),
+    a: 120
+  });
+}
+function passiveFishUpdate(dt) {
+  _pfish.spawnTimer -= dt;
+  if (_pfish.spawnTimer <= 0) {
+    _pfish.spawnTimer = random(0.9, 1.8);
+    if (random() < 0.7) _spawnFish();
+  }
+  for (let f of _pfish.items) {
+    f.x += f.vx * dt;
+    f.y += sin((frameCount*0.05) + f.w) * 6 * dt * 10;
+  }
+  _pfish.items = _pfish.items.filter(f => f.x > -40);
+}
+function passiveFishDraw() {
+  noStroke();
+  for (let f of _pfish.items) {
+    fill(120, 190, 220, f.a);
+    ellipse(f.x, f.y, f.r*2.2, f.r*1.2);
+    triangle(f.x - f.r, f.y, f.x - f.r - f.r*0.7, f.y - f.r*0.4, f.x - f.r - f.r*0.7, f.y + f.r*0.4);
+    fill(230, 255, 255, f.a);
+    ellipse(f.x + f.r*0.3, f.y - f.r*0.2, f.r*0.25, f.r*0.25);
+  }
+}
+
+// Rare mines
+const _mines = { items:[], spawnTimer: 3.5 };
+function _spawnMine() {
+  _mines.items.push({
+    x: width + 30, y: random(60, height-60),
+    vx: -random(70, 120), r: 12 + random(-2, 4),
+    phase: random(TWO_PI)
+  });
+}
+function minesUpdate(dt) {
+  _mines.spawnTimer -= dt;
+  if (_mines.spawnTimer <= 0) {
+    _mines.spawnTimer = random(4.5, 8.5);
+    if (random() < 0.6) _spawnMine();
+  }
+  for (let m of _mines.items) {
+    m.x += m.vx * dt;
+    m.y += sin(frameCount*0.05 + m.phase) * 0.6;
+  }
+  _mines.items = _mines.items.filter(m => m.x > -40);
+}
+function minesDraw() {
+  for (let m of _mines.items) {
+    push(); translate(m.x, m.y);
+    fill(200, 60, 60); stroke(100,20,20);
+    ellipse(0, 0, m.r*2, m.r*2);
+    for (let i=0;i<8;i++){ const a=i*TWO_PI/8; line(cos(a)*m.r, sin(a)*m.r, cos(a)*(m.r+6), sin(a)*(m.r+6)); }
+    pop();
+  }
+}
+function minesCollide(cx, cy, r) {
+  for (let m of _mines.items) { const dx=cx-m.x, dy=cy-m.y, rr=r+m.r; if (dx*dx+dy*dy <= rr*rr) return true; }
+  return false;
+}
+
+//DEPRECATED
+/*function keyIsPressed() {
+  if (keyCode == 38) {
+    bubbleSound.play();
+  } else {
+    bubbleSound.stop();
+  }
+  if (keyCode == 82) { ... }
+}*/
